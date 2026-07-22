@@ -2,7 +2,7 @@
 
 An animated, interactive end-to-end trace of **real-time segmentation** and **complex event processing (CEP)** running on [VoltDB](https://www.voltactivedata.com/) — from `CREATE TABLE` to a 500-million-user peak, in a single self-contained HTML page.
 
-> **[▶ Watch it live](https://biplabvoltdb.github.io/Real-time-segmentation-CEP-VoltDB-user-event-journey/)** *(GitHub Pages — update this link after enabling Pages)*
+> **[▶ Watch it live](https://biplabvoltdb.github.io/Real-time-segmentation-CEP-VoltDB-user-event-journey/)**
 
 ## What it demonstrates
 
