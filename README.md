@@ -2,7 +2,7 @@
 
 An animated, interactive end-to-end trace of **real-time segmentation** and **complex event processing (CEP)** running on [VoltDB](https://www.voltactivedata.com/) — from `CREATE TABLE` to a 500-million-user peak, in a single self-contained HTML page.
 
-**[▶ Watch it live]([https://YOUR-USERNAME.github.io/voltdb-event-journey/](https://biplabvoltdb.github.io/Real-time-segmentation-CEP-VoltDB-user-event-journey/))** *(GitHub Pages — update this link after enabling Pages)*
+> **[▶ Watch it live](https://biplabvoltdb.github.io/Real-time-segmentation-CEP-VoltDB-user-event-journey/)** *(GitHub Pages — update this link after enabling Pages)*
 
 ## What it demonstrates
 
@@ -58,3 +58,7 @@ Honors `prefers-reduced-motion` — animations collapse to instant state changes
 ## Disclaimer
 
 All latency figures, data volumes and business rules in the animation are **illustrative**, chosen to show the *shape* of the system's behavior. A proof of concept replaces them with measured numbers for a specific workload and infrastructure.
+
+## License
+
+MIT — see [LICENSE](LICENSE). VoltDB is a trademark of Volt Active Data, Inc.; this is an independent demonstration page.
