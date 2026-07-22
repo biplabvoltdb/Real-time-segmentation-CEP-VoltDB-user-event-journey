@@ -1,0 +1,1156 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>One Event's Journey — Schema to Scale on VoltDB</title>
+<style>
+  :root {
+    color-scheme: dark;
+    --bg: #0A1524; --bg2: #0D1A2C; --panel: #101E31; --panel2: #14233A; --line: #22354E;
+    --ink: #E8F0FA; --soft: #9FB4CC; --dim: #5F7590;
+    --blue: #57A7FF; --blue-deep: #1E5FD6; --blue-glow: rgba(87,167,255,.45);
+    --amber: #FFB65C; --amber-glow: rgba(255,182,92,.45);
+    --green: #3DDC97; --green-glow: rgba(61,220,151,.4); --red: #FF7A76;
+    --mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+    --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; }
+  body {
+    background:
+      radial-gradient(1100px 500px at 70% -10%, #12233C 0%, transparent 60%),
+      radial-gradient(900px 480px at 0% 110%, #0F2033 0%, transparent 55%),
+      var(--bg);
+    color: var(--ink); font-family: var(--sans); font-size: 15.5px; line-height: 1.55;
+    -webkit-font-smoothing: antialiased; min-height: 100vh;
+  }
+  .frame { max-width: 1280px; margin: 0 auto; padding: 26px 22px 80px; }
+
+  header { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 16px; padding: 6px 4px 18px; }
+  .titleblock { flex: 1 1 460px; min-width: 300px; }
+  .eyebrow { font-family: var(--mono); font-size: 11.5px; letter-spacing: .22em; text-transform: uppercase; color: var(--blue); font-weight: 600; }
+  h1 { font-size: clamp(24px, 3.6vw, 36px); margin: 8px 0 4px; letter-spacing: -.02em; line-height: 1.1; text-wrap: balance; font-weight: 800; }
+  .sub { color: var(--soft); font-size: 14.5px; max-width: 68ch; margin: 0; }
+  .clockbox { font-family: var(--mono); text-align: right; flex: 0 0 auto; margin-left: auto; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 10px 16px; }
+  .clockbox .lbl { font-size: 10.5px; letter-spacing: .18em; color: var(--dim); text-transform: uppercase; }
+  #clock { font-size: 24px; font-weight: 700; color: var(--ink); font-variant-numeric: tabular-nums; letter-spacing: .02em; white-space: nowrap; }
+  #clock .ms { color: var(--blue); font-size: 15px; }
+  .timewarp { font-size: 10.5px; color: var(--amber); letter-spacing: .14em; text-transform: uppercase; height: 14px; visibility: hidden; }
+  .timewarp.on { visibility: visible; animation: blink 1s steps(2) infinite; }
+  @keyframes blink { 50% { opacity: .35; } }
+
+  .stage { position: relative; background: linear-gradient(180deg, var(--bg2), var(--panel) 130%); border: 1px solid var(--line); border-radius: 14px; overflow: hidden; }
+  .stage svg { display: none; width: 100%; height: auto; }
+  .stage svg.on { display: block; }
+  .stage .scanline { position: absolute; inset: 0; pointer-events: none; background: repeating-linear-gradient(0deg, transparent 0 3px, rgba(255,255,255,.012) 3px 4px); }
+
+  .node rect, .node circle { fill: var(--panel2); stroke: var(--line); stroke-width: 1.4; transition: stroke .3s, fill .3s, filter .3s, opacity .4s; }
+  .node text { fill: var(--soft); font-family: var(--mono); font-size: 11px; letter-spacing: .04em; }
+  .node .tt { fill: var(--ink); font-size: 12px; font-weight: 700; }
+  .node.dimmed { opacity: .38; }
+  .node.on rect, .node.on circle { stroke: var(--blue); fill: #16304F; filter: drop-shadow(0 0 8px var(--blue-glow)); }
+  .node.on text { fill: var(--ink); }
+  .node.warm rect { stroke: var(--amber); fill: #33260F; filter: drop-shadow(0 0 8px var(--amber-glow)); }
+  .zone > rect { fill: rgba(255,255,255,.015); stroke: var(--line); stroke-dasharray: 5 5; stroke-width: 1; }
+  .zone > text { fill: var(--dim); font-family: var(--mono); font-size: 11px; letter-spacing: .2em; }
+  .wire { fill: none; stroke: var(--line); stroke-width: 1.2; opacity: .55; }
+  .wire.lit { stroke: var(--blue); opacity: .95; stroke-width: 1.8; }
+  .wire.lit-amber { stroke: var(--amber); opacity: .95; stroke-width: 1.8; }
+  .packet { filter: drop-shadow(0 0 6px var(--blue-glow)); }
+  .packet.amber { filter: drop-shadow(0 0 6px var(--amber-glow)); }
+  .row-flash rect { animation: rowflash 1.1s ease-out 1; }
+  @keyframes rowflash { 0% { fill: #2C5A9E; } 100% { fill: var(--panel2); } }
+  .row-flash-amber rect { animation: rowflashA 1.1s ease-out 1; }
+  @keyframes rowflashA { 0% { fill: #7A5518; } 100% { fill: var(--panel2); } }
+  .row-flash-red rect { animation: rowflashR 1.1s ease-out 1; }
+  @keyframes rowflashR { 0% { fill: #6B2320; } 100% { fill: var(--panel2); } }
+  #phone-notif { opacity: 0; transition: opacity .5s; }
+  #phone-notif.show { opacity: 1; }
+
+  .schemarow { opacity: .07; transition: opacity .6s; }
+  .schemarow.built { opacity: 1; }
+
+  /* queue slots (scene B) */
+  .qslot { fill: #0E1B2C; stroke: var(--line); stroke-width: 1.2; transition: fill .25s, stroke .25s; }
+  .qslot.other { fill: #3A557A; stroke: #4B6B96; }
+  .qslot.priya { fill: var(--blue); stroke: #8CC4FF; filter: drop-shadow(0 0 6px var(--blue-glow)); }
+  .qlabel { fill: var(--dim); font-family: var(--mono); font-size: 9.5px; }
+  #n-exec.busy rect { stroke: var(--green); fill: #10321F; filter: drop-shadow(0 0 8px var(--green-glow)); }
+
+  /* scene A cells */
+  .cell rect.body { fill: var(--panel2); stroke: var(--line); stroke-width: 1.2; transition: stroke .3s, opacity .4s; }
+  .cell text { font-family: var(--mono); font-size: 10.5px; }
+  .cell.leader > text { fill: #8CC4FF; font-weight: 700; }
+  .cell.replica > text { fill: var(--dim); }
+  .cell.replica rect.body { stroke-dasharray: 4 3; }
+  .cell rect.bar { fill: #2C5A9E; }
+  .cell.hit rect.body { stroke: var(--blue); filter: drop-shadow(0 0 5px var(--blue-glow)); }
+  .cell.down { opacity: .28; }
+  .cell.down rect.body { stroke: var(--red); }
+  .cell.promoted rect.body { stroke: var(--green); stroke-dasharray: none; filter: drop-shadow(0 0 6px var(--green-glow)); }
+  .cell.promoted > text { fill: var(--green); font-weight: 700; }
+  .cell .qd { fill: var(--amber); opacity: 0; transition: opacity .4s; }
+  #cells.queues-on .cell .qd { opacity: .9; animation: qpulse 1.1s ease-in-out infinite; }
+  @keyframes qpulse { 0%,100% { opacity: .9; } 50% { opacity: .25; } }
+  .nodebox > rect { fill: rgba(255,255,255,.02); stroke: var(--line); stroke-width: 1.4; transition: stroke .3s, opacity .4s; }
+  .nodebox > text { fill: var(--ink); font-family: var(--mono); font-size: 12px; font-weight: 700; }
+  .nodebox .subt { fill: var(--dim); font-size: 10.5px; font-weight: 400; }
+  .nodebox.failed > rect { stroke: var(--red); }
+  #n2x { fill: var(--red); font-family: var(--mono); font-size: 60px; font-weight: 800; opacity: 0; transition: opacity .4s; }
+  #n2x.show { opacity: .9; }
+  .hud text { font-family: var(--mono); fill: var(--soft); font-size: 12px; }
+  .hud .big { fill: var(--green); font-size: 16px; font-weight: 700; }
+
+  .overlay { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; background: rgba(8,17,30,.72); backdrop-filter: blur(3px); z-index: 5; transition: opacity .4s; }
+  .overlay.hidden { opacity: 0; pointer-events: none; }
+  .bigplay {
+    font-family: var(--sans); font-size: 17px; font-weight: 700; color: #06131F;
+    background: linear-gradient(135deg, var(--blue), #8CC4FF); border: none; border-radius: 999px;
+    padding: 16px 34px; cursor: pointer; box-shadow: 0 0 0 6px rgba(87,167,255,.15), 0 8px 30px rgba(30,95,214,.45);
+  }
+  .bigplay:hover { transform: translateY(-1px); }
+  .bigplay:focus-visible { outline: 3px solid var(--amber); outline-offset: 3px; }
+
+  .cockpit { display: grid; grid-template-columns: 1.15fr .95fr 1fr; gap: 14px; margin-top: 14px; align-items: stretch; }
+  @media (max-width: 980px) { .cockpit { grid-template-columns: 1fr 1fr; } .pane.narr { grid-column: 1 / -1; } }
+  @media (max-width: 640px)  { .cockpit { grid-template-columns: 1fr; } }
+  .pane { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 16px 18px; min-height: 260px; display: flex; flex-direction: column; }
+  .pane .cap { font-family: var(--mono); font-size: 10.5px; letter-spacing: .2em; text-transform: uppercase; color: var(--dim); font-weight: 600; display: flex; justify-content: space-between; gap: 8px; }
+  .pane .cap .live { color: var(--green); }
+
+  .spots { display: flex; gap: 6px; margin-top: 10px; flex-wrap: wrap; }
+  .spot { font-family: var(--mono); font-size: 10px; letter-spacing: .08em; font-weight: 700; padding: 3px 9px; border-radius: 999px; border: 1px solid var(--line); color: var(--dim); transition: all .3s; }
+  .spot.on { border-color: var(--green); color: var(--green); box-shadow: 0 0 8px var(--green-glow); background: rgba(61,220,151,.08); }
+
+  .narr h2 { font-size: 18.5px; margin: 10px 0 2px; letter-spacing: -.01em; line-height: 1.25; }
+  .narr .chno { font-family: var(--mono); color: var(--blue); font-size: 12px; margin-top: 8px; }
+  .narr .chno .act { color: var(--dim); }
+  .narr .body { color: var(--soft); font-size: 14px; margin-top: 8px; }
+  .narr .body b { color: var(--ink); }
+  .mech { margin-top: auto; padding-top: 12px; font-size: 12px; font-family: var(--mono); color: var(--blue); border-top: 1px dashed var(--line); }
+  .mech .k { color: var(--dim); }
+  .scoregrid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 10px; }
+  .scoregrid .sc { background: var(--panel2); border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; }
+  .scoregrid .sc .v { font-family: var(--mono); font-size: 14px; font-weight: 700; color: var(--green); }
+  .scoregrid .sc .l { font-size: 10.5px; color: var(--dim); }
+
+  .staterow { display: flex; justify-content: space-between; align-items: center; gap: 10px; padding: 6px 0; border-bottom: 1px solid var(--line); }
+  .staterow:last-child { border-bottom: none; }
+  .staterow .k { font-family: var(--mono); font-size: 11.5px; color: var(--dim); }
+  .staterow .v { font-family: var(--mono); font-size: 12.8px; color: var(--ink); font-variant-numeric: tabular-nums; text-align: right; }
+  .badge { display: inline-block; font-family: var(--mono); font-size: 11px; font-weight: 700; padding: 2px 10px; border-radius: 999px; letter-spacing: .06em; }
+  .badge.silver { background: #2A3A50; color: #B9C9DC; border: 1px solid #45607F; }
+  .badge.gold { background: #40300C; color: #FFCE7A; border: 1px solid #8A6A25; box-shadow: 0 0 10px rgba(255,182,92,.25); }
+  .badge.flip { animation: flip .7s ease; }
+  @keyframes flip { 0% { transform: scale(.6) rotate(-6deg); } 60% { transform: scale(1.15); } 100% { transform: scale(1); } }
+  .watch { color: var(--amber); font-weight: 700; }
+  .watch.dead { color: var(--red); }
+  .watch.gone { color: var(--dim); text-decoration: line-through; }
+  .delta { color: var(--green); font-size: 11px; margin-left: 6px; }
+
+  .console-pane { background: #0A1422; }
+  .console { font-family: var(--mono); font-size: 12px; line-height: 1.7; margin-top: 10px; overflow-y: auto; max-height: 250px; flex: 1; }
+  .console .ln { opacity: 0; transform: translateY(4px); animation: lnin .35s forwards; white-space: pre-wrap; }
+  @keyframes lnin { to { opacity: 1; transform: none; } }
+  .console .p { color: var(--dim); }
+  .console .sql { color: #8CC4FF; }
+  .console .ok { color: var(--green); }
+  .console .warn { color: var(--amber); }
+  .console .err { color: var(--red); }
+  .console .cm { color: var(--dim); font-style: italic; }
+
+  .transport {
+    position: sticky; bottom: 14px; margin-top: 16px; z-index: 6;
+    background: rgba(13,26,44,.92); backdrop-filter: blur(8px);
+    border: 1px solid var(--line); border-radius: 12px; padding: 10px 14px;
+    display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+  }
+  .tbtn { font-family: var(--mono); font-size: 13px; color: var(--ink); background: var(--panel2); border: 1px solid var(--line); border-radius: 8px; padding: 8px 13px; cursor: pointer; }
+  .tbtn:hover { border-color: var(--blue); color: var(--blue); }
+  .tbtn:focus-visible { outline: 2px solid var(--amber); outline-offset: 2px; }
+  .tbtn.primary { background: var(--blue-deep); border-color: var(--blue-deep); font-weight: 700; min-width: 86px; }
+  .tbtn.primary:hover { color: #fff; filter: brightness(1.15); }
+  .dots { display: flex; gap: 5px; flex: 1; justify-content: center; flex-wrap: wrap; min-width: 220px; }
+  .dot { width: 22px; height: 8px; border-radius: 999px; background: var(--line); border: none; cursor: pointer; padding: 0; transition: background .25s, width .25s; }
+  .dot:hover { background: var(--dim); }
+  .dot.cur { background: var(--blue); width: 36px; box-shadow: 0 0 8px var(--blue-glow); }
+  .dot.done { background: #35507A; }
+  .dot.amb.cur { background: var(--amber); box-shadow: 0 0 8px var(--amber-glow); }
+  .dot.grn.cur { background: var(--green); box-shadow: 0 0 8px var(--green-glow); }
+  .dot:focus-visible { outline: 2px solid var(--amber); outline-offset: 2px; }
+  .chlabel { font-family: var(--mono); font-size: 11px; color: var(--dim); min-width: 150px; text-align: right; }
+
+  @media (prefers-reduced-motion: reduce) {
+    .badge.flip, .row-flash rect, .row-flash-amber rect, .row-flash-red rect, .timewarp.on,
+    #cells.queues-on .cell .qd { animation: none; }
+    .console .ln { animation: none; opacity: 1; transform: none; }
+  }
+</style>
+</head>
+<body>
+
+<div class="frame">
+  <header>
+    <div class="titleblock">
+      <div class="eyebrow">VoltDB · Event Journey · Schema to Scale</div>
+      <h1>From CREATE TABLE to 500 million users</h1>
+      <p class="sub">Five acts: the schema and its <b>stored procedures</b> are born, data floods 12 leader + 12 replica
+        partitions, Priya's event queues behind others in <b>7L's serializable isolation queue</b>, flips her to
+        <b style="color:var(--amber)">Gold</b> and earns a segment-matched offer in <b>single-digit milliseconds</b> —
+        then a node dies, rejoins <i>live from its peers</i>, and a redelivered event bounces off the idempotency ledger.</p>
+    </div>
+    <div class="clockbox">
+      <div class="lbl">wall clock</div>
+      <div id="clock">DAY 0 · 09:00</div>
+      <div class="timewarp" id="timewarp">⏩ time compressed</div>
+    </div>
+  </header>
+
+  <div class="stage" id="stage">
+
+    <!-- ============ SCENE A · CLUSTER VIEW ============ -->
+    <svg id="sceneA" viewBox="0 0 1240 600" role="img" aria-label="Cluster view: three VoltDB nodes holding 12 leader and 12 replica partitions, bulk loader, replicated tables and command logs">
+      <g class="node" id="n-loader">
+        <rect x="440" y="30" width="360" height="52" rx="9"/>
+        <text class="tt" x="456" y="52">BULK LOAD · S3 backfill → csvloader / Kafka</text>
+        <text x="456" y="68">hash(USER_ID) → one of 12 leader partitions · a user's rows co-locate</text>
+      </g>
+      <g class="hud">
+        <text x="1010" y="46">rows loaded</text>
+        <text class="big" id="hud-rows" x="1010" y="66">0</text>
+        <text x="1010" y="92">throughput</text>
+        <text class="big" id="hud-eps" x="1010" y="112">—</text>
+      </g>
+      <g class="nodebox" id="nb-0">
+        <rect x="70" y="130" width="340" height="310" rx="12"/>
+        <text x="88" y="154">NODE 1 <tspan class="subt">· 4 leaders · 4 replicas</tspan></text>
+        <rect x="88" y="322" width="304" height="28" rx="6" fill="#14233A" stroke="#22354E"/>
+        <text class="subt" x="98" y="340">replicated: SEGMENT_RULE · OFFERS · MASTERS</text>
+        <rect x="88" y="360" width="130" height="26" rx="6" fill="#14233A" stroke="#22354E"/>
+        <text class="subt" x="98" y="377">cmd log · disk</text>
+      </g>
+      <g class="nodebox" id="nb-1">
+        <rect x="450" y="130" width="340" height="310" rx="12"/>
+        <text x="468" y="154">NODE 2 <tspan class="subt">· 4 leaders · 4 replicas</tspan></text>
+        <rect x="468" y="322" width="304" height="28" rx="6" fill="#14233A" stroke="#22354E"/>
+        <text class="subt" x="478" y="340">replicated: SEGMENT_RULE · OFFERS · MASTERS</text>
+        <rect x="468" y="360" width="130" height="26" rx="6" fill="#14233A" stroke="#22354E"/>
+        <text class="subt" x="478" y="377">cmd log · disk</text>
+        <text id="n2x" x="590" y="300" text-anchor="middle">✕</text>
+      </g>
+      <g class="nodebox" id="nb-2">
+        <rect x="830" y="130" width="340" height="310" rx="12"/>
+        <text x="848" y="154">NODE 3 <tspan class="subt">· 4 leaders · 4 replicas</tspan></text>
+        <rect x="848" y="322" width="304" height="28" rx="6" fill="#14233A" stroke="#22354E"/>
+        <text class="subt" x="858" y="340">replicated: SEGMENT_RULE · OFFERS · MASTERS</text>
+        <rect x="848" y="360" width="130" height="26" rx="6" fill="#14233A" stroke="#22354E"/>
+        <text class="subt" x="858" y="377">cmd log · disk</text>
+      </g>
+      <g id="cells"></g>
+      <text x="70" y="478" fill="#5F7590" font-family="ui-monospace,Menlo,monospace" font-size="11.5">
+        12 leaders (L) + 12 replicas (R) · K = 1 · a leader and its replica never share a node — lose any one node, lose nothing
+      </text>
+      <text x="70" y="498" fill="#5F7590" font-family="ui-monospace,Menlo,monospace" font-size="11.5">
+        amber dots = each partition's own serializable isolation queue · every partition executes one transaction at a time
+      </text>
+      <g id="pk-a"></g>
+    </svg>
+
+    <!-- ============ SCENE B · JOURNEY VIEW ============ -->
+    <svg id="sceneB" viewBox="0 0 1240 620" role="img" aria-label="Journey view: phone, Kafka topics, VoltDB partition 7L with stored procedures, horizontal isolation queue and tables, replica 7R, command log, export topics, notification service">
+      <g class="zone"><rect x="186" y="84" width="188" height="330" rx="10"/><text x="200" y="106">KAFKA · IN</text></g>
+      <g class="zone"><rect x="416" y="58" width="478" height="470" rx="10"/><text x="432" y="80">VOLTDB CLUSTER</text></g>
+      <g class="zone"><rect x="924" y="84" width="196" height="330" rx="10"/><text x="938" y="106">VOLT TOPICS · OUT</text></g>
+
+      <path id="w-phone-pay"  class="wire" d="M138,252 C 168,236 172,168 196,158"/>
+      <path id="w-phone-cart" class="wire" d="M138,292 C 168,286 172,226 196,222"/>
+      <path id="w-pay-ring"   class="wire" d="M366,158 C 408,172 432,236 452,262"/>
+      <path id="w-cart-ring"  class="wire" d="M366,222 C 408,230 432,252 452,270"/>
+      <path id="w-ring-p7"    class="wire" d="M522,266 C 540,236 552,180 570,160"/>
+      <path id="w-p7-replica" class="wire" d="M646,418 L 636,436"/>
+      <path id="w-p7-disk"    class="wire" d="M792,418 L 798,436"/>
+      <path id="w-p7-seg"     class="wire" d="M864,186 C 900,168 904,140 928,134"/>
+      <path id="w-watch-ab"   class="wire" d="M864,322 C 900,312 906,258 928,251"/>
+      <path id="w-ab-ring"    class="wire" d="M928,262 C 740,360 570,360 506,300"/>
+      <path id="w-p7-notif"   class="wire" d="M864,398 C 906,386 908,368 928,364"/>
+      <path id="w-o-svc"      class="wire" d="M1020,388 L 1026,438"/>
+      <path id="w-notif-phone" class="wire" d="M1016,488 C 1010,560 480,580 96,372"/>
+
+      <g class="node" id="n-phone">
+        <rect x="26" y="196" width="112" height="176" rx="14"/>
+        <rect x="38" y="214" width="88" height="140" rx="6" fill="#0B1828" stroke="#22354E"/>
+        <text class="tt" x="46" y="236">Priya</text>
+        <text x="46" y="252">user 88412</text>
+        <text x="46" y="268">online · in app</text>
+        <g id="phone-notif">
+          <rect x="42" y="288" width="80" height="52" rx="6" fill="#33260F" stroke="#8A6A25"/>
+          <text x="48" y="304" fill="#FFCE7A" font-weight="700">CART10 🎁</text>
+          <text x="48" y="318" fill="#FFCE7A">10% off cart</text>
+          <text x="48" y="332" fill="#FFCE7A">next 15 min</text>
+        </g>
+      </g>
+
+      <g class="node" id="n-t-pay"><rect x="196" y="136" width="170" height="44" rx="7"/><text class="tt" x="208" y="154">payment.events</text><text x="208" y="170">100–500M / day</text></g>
+      <g class="node" id="n-t-cart"><rect x="196" y="200" width="170" height="44" rx="7"/><text class="tt" x="208" y="218">user.cart.events</text><text x="208" y="234">clickstream</text></g>
+      <g class="node dimmed" id="n-t-prof"><rect x="196" y="264" width="170" height="44" rx="7"/><text class="tt" x="208" y="282">user.profile.events</text><text x="208" y="298">attributes</text></g>
+      <g class="node dimmed" id="n-t-sess"><rect x="196" y="328" width="170" height="44" rx="7"/><text class="tt" x="208" y="346">session.events</text><text x="208" y="362">presence</text></g>
+
+      <g class="node" id="n-ring">
+        <circle cx="486" cy="272" r="38"/>
+        <circle cx="486" cy="272" r="26" fill="none" stroke="#2C4363" stroke-dasharray="4 5"/>
+        <text x="459" y="268">importer +</text>
+        <text x="460" y="282">hash ring</text>
+      </g>
+
+      <!-- stored procedures -->
+      <g class="node" id="n-procs">
+        <rect x="428" y="336" width="118" height="128" rx="9"/>
+        <text class="tt" x="440" y="356">STORED PROCS</text>
+        <text x="440" y="370" font-size="9.5">compiled in-engine</text>
+      </g>
+      <g class="node schemarow" id="p-proc1"><rect x="436" y="378" width="102" height="22" rx="5"/><text x="442" y="393" font-size="9.5">IngestAndSegment</text></g>
+      <g class="node schemarow" id="p-proc2"><rect x="436" y="404" width="102" height="22" rx="5"/><text x="442" y="419" font-size="9.5">IngestCartWatch</text></g>
+      <g class="node schemarow" id="p-proc3"><rect x="436" y="430" width="102" height="22" rx="5"/><text x="442" y="445" font-size="9.5">NudgeCheck</text></g>
+
+      <!-- partition 7L with horizontal isolation queue -->
+      <g class="node" id="n-p7">
+        <rect x="560" y="88" width="304" height="330" rx="10"/>
+        <text class="tt" x="574" y="110">PARTITION 7L · leader</text>
+      </g>
+      <g class="node" id="n-queue">
+        <text class="qlabel" x="574" y="136">serializable isolation queue — one txn at a time →</text>
+        <rect id="q0" class="qslot" x="574" y="144" width="40" height="20" rx="4"/>
+        <rect id="q1" class="qslot" x="620" y="144" width="40" height="20" rx="4"/>
+        <rect id="q2" class="qslot" x="666" y="144" width="40" height="20" rx="4"/>
+        <rect id="q3" class="qslot" x="712" y="144" width="40" height="20" rx="4"/>
+        <rect id="q4" class="qslot" x="758" y="144" width="40" height="20" rx="4"/>
+      </g>
+      <g class="node" id="n-exec">
+        <rect x="806" y="141" width="50" height="26" rx="6"/>
+        <text x="813" y="158" font-size="10">⚙ exec</text>
+      </g>
+
+      <g class="node schemarow" id="r-cust"><rect x="574" y="182" width="276" height="20" rx="5"/><text x="584" y="196">CUSTOMER · seg=<tspan id="svg-seg" fill="#B9C9DC" font-weight="700">SILVER</tspan></text></g>
+      <g class="node schemarow" id="r-agg"><rect x="574" y="208" width="276" height="20" rx="5"/><text x="584" y="222">CUSTOMER_AGG · 15d=<tspan id="svg-sum" font-weight="700" fill="#E8F0FA">₹42,300</tspan></text></g>
+      <g class="node schemarow" id="r-ev"><rect x="574" y="234" width="276" height="20" rx="5"/><text x="584" y="248">CUSTOMER_EVENT · USING TTL 30 DAYS</text></g>
+      <g class="node schemarow" id="r-mv"><rect x="574" y="260" width="276" height="20" rx="5"/><text x="584" y="274">MV_SPEND_DAILY · today=<tspan id="svg-bkt" font-weight="700" fill="#E8F0FA">₹0</tspan></text></g>
+      <g class="node schemarow" id="r-cart"><rect x="574" y="286" width="276" height="20" rx="5"/><text x="584" y="300">ACTIVE_CART / ITEM · <tspan id="svg-cart" fill="#5F7590">—</tspan></text></g>
+      <g class="node schemarow" id="r-watch"><rect x="574" y="312" width="276" height="20" rx="5"/><text x="584" y="326">CART_WATCH · TTL 30m→MIGRATE · <tspan id="svg-watch" fill="#5F7590">—</tspan></text></g>
+      <g class="node schemarow" id="r-nlog"><rect x="574" y="338" width="276" height="20" rx="5"/><text x="584" y="352">NUDGE_LOG · idempotency · <tspan id="svg-nlog" fill="#5F7590">—</tspan></text></g>
+      <g class="node schemarow" id="r-rule"><rect x="574" y="364" width="276" height="20" rx="5"/><text x="584" y="378">SEGMENT_RULE ⊕ repl · GOLD ≥ ₹50,000/15d</text></g>
+      <g class="node schemarow" id="r-offers"><rect x="574" y="390" width="276" height="20" rx="5"/><text x="584" y="404">OFFERS ⊕ repl · segment → offer</text></g>
+
+      <g class="node" id="n-replica"><rect x="560" y="436" width="164" height="52" rx="8"/><text class="tt" x="574" y="457">7R · synchronous replica</text><text x="574" y="473">lives on another node</text></g>
+      <g class="node" id="n-disk"><rect x="744" y="436" width="150" height="52" rx="8"/><text class="tt" x="758" y="457">command log</text><text x="758" y="473">for full-cluster restart</text></g>
+
+      <g class="node" id="n-o-seg"><rect x="932" y="112" width="180" height="44" rx="7"/><text class="tt" x="944" y="130">segment.changed</text><text x="944" y="146">→ marketing · C360</text></g>
+      <g class="node" id="n-o-ab"><rect x="932" y="228" width="180" height="44" rx="7"/><text class="tt" x="944" y="246">cart.abandoned</text><text x="944" y="262">TTL migrate target</text></g>
+      <g class="node" id="n-o-notif"><rect x="932" y="342" width="180" height="44" rx="7"/><text class="tt" x="944" y="360">notification.events</text><text x="944" y="376">→ push channel</text></g>
+      <g class="node" id="n-svc"><rect x="944" y="438" width="168" height="50" rx="8"/><text class="tt" x="958" y="459">Notification service</text><text x="958" y="475">push · sms · email</text></g>
+
+      <g id="pk-b"></g>
+    </svg>
+
+    <div class="scanline"></div>
+    <div class="overlay" id="overlay">
+      <button class="bigplay" id="bigplay">▶&nbsp; Play the journey</button>
+    </div>
+  </div>
+
+  <div class="cockpit">
+    <div class="pane narr">
+      <div class="cap"><span>Narration</span><span id="chcount">ch 00 / 16</span></div>
+      <div class="spots" id="spots">
+        <span class="spot" data-s="ATOMIC">A · ATOMIC</span>
+        <span class="spot" data-s="CONSISTENT">C · CONSISTENT</span>
+        <span class="spot" data-s="ISOLATED">I · ISOLATED</span>
+        <span class="spot" data-s="DURABLE">D · DURABLE</span>
+        <span class="spot" data-s="IDEMPOTENT">＋ IDEMPOTENT</span>
+      </div>
+      <div class="chno" id="chno">CHAPTER 00</div>
+      <h2 id="chtitle">—</h2>
+      <div class="body" id="chbody"></div>
+      <div class="mech" id="chmech"></div>
+    </div>
+
+    <div class="pane">
+      <div class="cap"><span>Partition 7L · live state</span><span class="live">● LIVE</span></div>
+      <div style="margin-top:8px">
+        <div class="staterow"><span class="k">CUSTOMER.segment</span><span class="v"><span id="st-seg" class="badge silver">SILVER</span></span></div>
+        <div class="staterow"><span class="k">AGG.txn_sum_15d</span><span class="v" id="st-sum">₹42,300</span></div>
+        <div class="staterow"><span class="k">MV bucket · today</span><span class="v" id="st-bkt">₹0</span></div>
+        <div class="staterow"><span class="k">ACTIVE_CART</span><span class="v" id="st-cart">—</span></div>
+        <div class="staterow"><span class="k">CART_WATCH due</span><span class="v" id="st-watch">—</span></div>
+        <div class="staterow"><span class="k">OFFER selected</span><span class="v" id="st-offer">—</span></div>
+        <div class="staterow"><span class="k">NUDGE_LOG</span><span class="v" id="st-nlog">—</span></div>
+        <div class="staterow"><span class="k">SEGMENT_RULE</span><span class="v" style="color:var(--dim)">GOLD ≥ ₹50,000 / 15d</span></div>
+      </div>
+    </div>
+
+    <div class="pane console-pane">
+      <div class="cap"><span>Transaction console</span><span id="lat" style="color:var(--green)"></span></div>
+      <div class="console" id="console" aria-live="polite"></div>
+    </div>
+  </div>
+
+  <div class="transport">
+    <button class="tbtn" id="btn-restart" aria-label="Restart">⟲</button>
+    <button class="tbtn" id="btn-prev" aria-label="Previous chapter">◀</button>
+    <button class="tbtn primary" id="btn-play" aria-label="Play or pause">▶ Play</button>
+    <button class="tbtn" id="btn-next" aria-label="Next chapter">▶▶</button>
+    <div class="dots" id="dots" role="tablist" aria-label="Chapters"></div>
+    <div class="chlabel" id="chlabel"></div>
+  </div>
+</div>
+
+<script>
+(function () {
+  "use strict";
+  const RM = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  const $ = (id) => document.getElementById(id);
+  const svgNS = "http://www.w3.org/2000/svg";
+  const fmt = (n) => "₹" + n.toLocaleString("en-IN");
+  const mmss = (s) => String(Math.floor(s / 60)).padStart(2, "0") + ":" + String(s % 60).padStart(2, "0");
+
+  /* ============ build scene A cells: 12 leaders + 12 replicas ============ */
+  const LABELS = [
+    ["1L","2L","3L","4L","9R","10R","11R","12R"],   // node 1
+    ["5L","6L","7L","8L","1R","2R","3R","4R"],      // node 2
+    ["9L","10L","11L","12L","5R","6R","7R","8R"],   // node 3
+  ];
+  const cellsG = $("cells");
+  const CELLS = [];
+  const NODE_X = [70, 450, 830];
+  for (let n = 0; n < 3; n++) {
+    for (let i = 0; i < 8; i++) {
+      const col = i % 4, row = Math.floor(i / 4);
+      const x = NODE_X[n] + 18 + col * 78, y = 168 + row * 72;
+      const label = LABELS[n][i];
+      const isLeader = label.endsWith("L");
+      const g = document.createElementNS(svgNS, "g");
+      g.setAttribute("class", "cell " + (isLeader ? "leader" : "replica"));
+      const body = document.createElementNS(svgNS, "rect");
+      body.setAttribute("class", "body");
+      body.setAttribute("x", x); body.setAttribute("y", y);
+      body.setAttribute("width", 70); body.setAttribute("height", 64); body.setAttribute("rx", 6);
+      const lbl = document.createElementNS(svgNS, "text");
+      lbl.setAttribute("x", x + 7); lbl.setAttribute("y", y + 15);
+      lbl.textContent = label;
+      const bar = document.createElementNS(svgNS, "rect");
+      bar.setAttribute("class", "bar");
+      bar.setAttribute("x", x + 6); bar.setAttribute("width", 58);
+      bar.setAttribute("y", y + 58); bar.setAttribute("height", 0); bar.setAttribute("rx", 2);
+      g.appendChild(body); g.appendChild(lbl); g.appendChild(bar);
+      // per-cell isolation-queue dots (visible in scale chapter)
+      for (let d = 0; d < 3; d++) {
+        const qd = document.createElementNS(svgNS, "circle");
+        qd.setAttribute("class", "qd");
+        qd.setAttribute("cx", x + 40 + d * 9); qd.setAttribute("cy", y + 11); qd.setAttribute("r", 2.6);
+        if (!RM) qd.style.animationDelay = (Math.random() * 1.1).toFixed(2) + "s";
+        g.appendChild(qd);
+      }
+      cellsG.appendChild(g);
+      CELLS.push({ g, bar, lbl, label, isLeader, cx: x + 35, cy: y + 32, y0: y, node: n });
+    }
+  }
+  function setCellFill(c, pct) {
+    const h = Math.round(36 * pct / 100);
+    c.bar.setAttribute("height", h);
+    c.bar.setAttribute("y", c.y0 + 58 - h);
+  }
+  function setAllFill(pct) { CELLS.forEach((c) => setCellFill(c, pct)); }
+
+  /* ============ baselines (state at START of each chapter) ============ */
+  const B = [
+    { sc:"A", clock:"—",             schema:false, fill:0,  seg:"SILVER", sum:42300, bkt:0,    cart:null, watch:null,       notif:false, offer:null, nlog:false },
+    { sc:"A", clock:"DAY 0 · 09:00", schema:false, fill:0,  seg:"SILVER", sum:42300, bkt:0,    cart:null, watch:null,       notif:false, offer:null, nlog:false },
+    { sc:"B", clock:"DAY 0 · 09:12", schema:false, fill:0,  seg:"SILVER", sum:42300, bkt:0,    cart:null, watch:null,       notif:false, offer:null, nlog:false },
+    { sc:"A", clock:"DAY 0 · 11:40", schema:true,  fill:0,  seg:"SILVER", sum:42300, bkt:0,    cart:null, watch:null,       notif:false, offer:null, nlog:false },
+    { sc:"B", clock:"14:02:31.004",  schema:true,  fill:85, seg:"SILVER", sum:42300, bkt:0,    cart:null, watch:null,       notif:false, offer:null, nlog:false },
+    { sc:"B", clock:"14:02:31.006",  schema:true,  fill:85, seg:"SILVER", sum:42300, bkt:0,    cart:null, watch:null,       notif:false, offer:null, nlog:false },
+    { sc:"B", clock:"14:02:31.008",  schema:true,  fill:85, seg:"SILVER", sum:52100, bkt:9800, cart:null, watch:null,       notif:false, offer:null, nlog:false },
+    { sc:"B", clock:"14:02:31.009",  schema:true,  fill:85, seg:"GOLD",   sum:52100, bkt:9800, cart:null, watch:null,       notif:false, offer:null, nlog:false },
+    { sc:"B", clock:"14:31:07.000",  schema:true,  fill:85, seg:"GOLD",   sum:52100, bkt:9800, cart:null, watch:null,       notif:false, offer:null, nlog:false },
+    { sc:"B", clock:"14:31:12.000",  schema:true,  fill:85, seg:"GOLD",   sum:52100, bkt:9800, cart:"#5512 · ₹6,500", watch:"29:55", notif:false, offer:null, nlog:false },
+    { sc:"B", clock:"15:01:07.000",  schema:true,  fill:85, seg:"GOLD",   sum:52100, bkt:9800, cart:"#5512 · ₹6,500", watch:"00:00", notif:false, offer:null, nlog:false },
+    { sc:"B", clock:"15:01:07.002",  schema:true,  fill:85, seg:"GOLD",   sum:52100, bkt:9800, cart:"#5512 · ₹6,500", watch:"migrated", notif:false, offer:null, nlog:false },
+    { sc:"B", clock:"15:01:07.004",  schema:true,  fill:85, seg:"GOLD",   sum:52100, bkt:9800, cart:"#5512 · ₹6,500", watch:"migrated", notif:false, offer:"CART10 · 10% · 15m", nlog:true },
+    { sc:"A", clock:"15:03:20.000",  schema:true,  fill:85, seg:"GOLD",   sum:52100, bkt:9800, cart:"#5512 · ₹6,500", watch:"migrated", notif:true,  offer:"CART10 · 10% · 15m", nlog:true },
+    { sc:"B", clock:"15:07:44.000",  schema:true,  fill:85, seg:"GOLD",   sum:52100, bkt:9800, cart:"#5512 · ₹6,500", watch:"migrated", notif:true,  offer:"CART10 · 10% · 15m", nlog:true },
+    { sc:"A", clock:"PEAK · 19:30",  schema:true,  fill:85, seg:"GOLD",   sum:52100, bkt:9800, cart:"#5512 · ₹6,500", watch:"migrated", notif:true,  offer:"CART10 · 10% · 15m", nlog:true },
+    { sc:"A", clock:"—",             schema:true,  fill:85, seg:"GOLD",   sum:52100, bkt:9800, cart:"#5512 · ₹6,500", watch:"migrated", notif:true,  offer:"CART10 · 10% · 15m", nlog:true },
+  ];
+
+  const SCHEMA_ROWS = ["r-cust","r-agg","r-ev","r-mv","r-cart","r-watch","r-nlog","r-rule","r-offers","p-proc1","p-proc2","p-proc3"];
+
+  /* ============ chapters ============ */
+  const CH = [
+    {
+      act: "PROLOGUE", t: "What this journey demonstrates", dur: 16000, amber: false, grn: true, spot: [],
+      hlA: [],
+      body: `Two production-grade use cases for a large consumer commerce &amp; payments platform —
+        <b>500M active users, 2–3B events/day</b>:
+        <div class="scoregrid">
+          <div class="sc"><div class="v">Use case 1</div><div class="l">Real-time segmentation — rolling aggregates per user, membership re-evaluated on <i>every</i> event</div></div>
+          <div class="sc"><div class="v">Use case 2</div><div class="l">Complex event processing — segment + cart + a 30-minute <i>absence</i> → nudge while the user is still online</div></div>
+        </div>
+        <p style="margin:10px 0 0">From VoltDB's perspective, watch for: <b>stored procedures</b> executing next to the data,
+        <b>materialized views</b> maintained inside the transaction, <b>TTL + MIGRATE</b> turning silence into an event,
+        <b>K-safety</b> absorbing a node loss, and an <b>idempotency ledger</b> making redelivery harmless —
+        with each ACID guarantee spotlighted at the exact moment it does its work.</p>`,
+      mech: "<span class='k'>how to watch →</span> ▶ plays all five acts · chapter dots jump anywhere · every number is illustrative until a PoC measures it",
+      logs: [
+        ["p", "» demonstration: live segmentation + in-session nudging, end to end"],
+        ["cm", "-- ACT I schema & data · ACT II the event · ACT III the nudge · ACT IV disaster · ACT V scale"],
+        ["cm", "-- one user (Priya, 88412) is traced throughout; the finale shows everyone at once"],
+      ],
+    },
+    {
+      act: "ACT I · FOUNDATION", t: "Day 0 — an empty cluster", dur: 8000, amber: false, grn: true, spot: [],
+      hlA: ["nb-0", "nb-1", "nb-2"],
+      body: "Three nodes on AWS (EC2 or EKS). With <b>K=1</b> the cluster will run <b>12 leader partitions</b> (1L–12L) and <b>12 replicas</b> (1R–12R) — 24 execution sites, and a leader and its replica <b>never share a node</b>. Each partition is a logical CPU bound to a slice of RAM, about to become an independent single-threaded engine. Right now: no tables, no procedures, no rows.",
+      mech: "<span class='k'>mechanism →</span> shared-nothing: 24 sites = 24 parallel engines, no locks anywhere",
+      logs: [["p", "» voltdb init --config … · 3 nodes · sitesperhost=8 · kfactor=1"], ["cm", "-- 12 leaders + 12 replicas placed · command logging enabled per node"]],
+    },
+    {
+      act: "ACT I · FOUNDATION", t: "DDL — tables, views, and the procedures that own them", dur: 14000, amber: false, grn: true, spot: [],
+      hl: ["n-p7", "n-procs"],
+      body: "One DDL script builds the world — shown here landing in <b>7L</b>, but identical in all 24 sites. <b>CUSTOMER_EVENT</b> is born with a 30-day TTL; <b>CART_WATCH</b> with <code>TTL 30 MINUTES … MIGRATE TO TARGET</code>; <b>MV_SPEND_DAILY</b> attaches to every future insert. <b>SEGMENT_RULE</b> and <b>OFFERS</b> replicate to all nodes. Then the <b>stored procedures</b> load — <b>IngestAndSegment</b>, <b>IngestCartWatch</b>, <b>NudgeCheck</b> — compiled Java+SQL, partitioned on USER_ID, living <i>inside</i> the engine next to the data they touch.",
+      mech: "<span class='k'>mechanism →</span> logic ships to the data: procedures are part of the schema, not the client",
+      logs: [
+        ["sql", "CREATE TABLE CUSTOMER (…); PARTITION ON COLUMN USER_ID;"],
+        ["sql", "CREATE TABLE CUSTOMER_EVENT (…) USING TTL 30 DAYS ON COLUMN EVENT_TS;"],
+        ["sql", "CREATE VIEW MV_SPEND_DAILY AS SELECT USER_ID, TRUNCATE(DAY,…) GROUP BY …;"],
+        ["sql", "CREATE TABLE CART_WATCH MIGRATE TO TARGET cart_abandoned (…) USING TTL 30 MINUTES;"],
+        ["sql", "CREATE TABLE NUDGE_LOG (…); CREATE TABLE SEGMENT_RULE (…); CREATE TABLE OFFERS (…);"],
+        ["sql", "CREATE PROCEDURE PARTITION ON TABLE CUSTOMER_EVENT COLUMN USER_ID"],
+        ["sql", "  FROM CLASS com.example.seg.IngestAndSegment;   -- + IngestCartWatch, NudgeCheck"],
+        ["ok",  "» schema + procedures loaded on all 24 sites ✓"],
+      ],
+      run: async (c) => {
+        for (let i = 0; i < SCHEMA_ROWS.length; i++) {
+          if (!c.alive()) return;
+          $(SCHEMA_ROWS[i]).classList.add("built");
+          c.flash(SCHEMA_ROWS[i]);
+          await c.wait(880);
+        }
+      },
+    },
+    {
+      act: "ACT I · FOUNDATION", t: "The flood — 500M profiles find their homes", dur: 11000, amber: false, grn: true, spot: ["ISOLATED"],
+      hlA: ["n-loader"],
+      body: "History backfills from S3 and Kafka. Every record routes by <b>hash(USER_ID)</b> to one of the <b>12 leaders</b> — Priya's 88412 always lands in <b>7L</b>, and so does <i>every other row about her</i> — while each write applies synchronously to the matching replica. The partitions fill <b>evenly and in parallel</b>; each ingests through its own serial queue, so even a bulk load never takes a lock.",
+      mech: "<span class='k'>mechanism →</span> consistent hashing + co-location: a user's whole world in one partition, forever",
+      logs: [
+        ["p", "» csvloader CUSTOMER · kafka backfill CUSTOMER_EVENT"],
+        ["sql", "  hash(88412) → 7L (replica 7R) · hash(51007) → 3L · hash(90210) → 11L …"],
+        ["ok", "  distribution: 12 leaders · σ < 2% skew · replicas in lock-step"],
+        ["ok", "» 500,000,000 profiles resident · views pre-aggregated on load"],
+      ],
+      run: async (c) => {
+        c.hud("hud-eps", "bulk ingest");
+        const t0 = performance.now(), MS = 8000;
+        const spawn = () => {
+          if (!c.alive()) return;
+          const k = (performance.now() - t0) / MS;
+          if (k < 1) {
+            c.dotTo(640, 82, CELLS[Math.floor(Math.random() * 24)], 650);
+            setAllFill(Math.min(85, Math.round(85 * k)));
+            c.hudRows(Math.min(500, Math.round(500 * k)));
+            setTimeout(spawn, RM ? 400 : 130);
+          } else { setAllFill(85); c.hudRows(500); }
+        };
+        spawn();
+        await c.wait(MS + 300);
+      },
+    },
+    {
+      act: "ACT II · THE EVENT", t: "A payment joins the queue — behind two strangers", dur: 11000, amber: false, spot: ["ISOLATED"],
+      hl: ["n-phone", "n-t-pay", "n-ring", "n-queue", "n-exec", "p-proc1"],
+      body: "14:02:31 — Priya pays <b>₹9,800</b>. The importer maps the topic to the <b>IngestAndSegment</b> procedure, the ring hashes 88412 → <b>7L</b>, and the call takes its place in <b>7L's horizontal isolation queue — behind two events for other users that were already waiting</b>. Watch them drain into the <b>⚙ execution engine</b> strictly one at a time. That queue <i>is</i> the isolation model: no locks, no latches, no deadlocks — order is the guarantee.",
+      mech: "<span class='k'>guarantee → I</span> · one serial queue per partition = strict serializable isolation, by construction",
+      logs: [
+        ["p", "» importer: payment.events → IngestAndSegment(88412, ₹9,800, evt 9f3a…)"],
+        ["sql", "  hash(88412) → partition 7L"],
+        ["warn", "  queue 7L: [user 51044] [user 62910] [★ 88412] — FIFO into ⚙"],
+        ["p", "  exec: 51044 done · exec: 62910 done"],
+        ["ok", "  ★ 88412 at head — Priya's turn. no other thread can touch 7L's data. ever."],
+      ],
+      run: async (c) => {
+        // two strangers already waiting at the head of the queue
+        c.qSet(4, "other"); c.qSet(3, "other");
+        await c.packet("w-phone-pay", 1100); c.flash("n-t-pay");
+        await c.packet("w-pay-ring", 1000); c.flash("n-ring");
+        await c.packet("w-ring-p7", 800);
+        c.qSet(2, "priya");                       // Priya enters behind them
+        await c.wait(800);
+        // stranger 1 executes
+        c.qSet(4, "empty"); c.execBusy(true); c.flash("n-p7"); await c.wait(650);
+        c.execBusy(false); c.qSet(3, "empty"); c.qSet(4, "other"); await c.wait(150);
+        c.qSet(2, "empty"); c.qSet(3, "priya"); await c.wait(500);
+        // stranger 2 executes
+        c.qSet(4, "empty"); c.execBusy(true); c.flash("n-p7"); await c.wait(650);
+        c.execBusy(false); c.qSet(3, "empty"); c.qSet(4, "priya"); await c.wait(700);
+        // Priya reaches the engine
+        c.qSet(4, "empty"); c.execBusy(true); c.flash("n-p7");
+      },
+    },
+    {
+      act: "ACT II · THE EVENT", t: "IngestAndSegment — every write, or none", dur: 9500, amber: false, spot: ["ATOMIC"],
+      hl: ["n-p7", "n-exec", "p-proc1", "r-ev", "r-mv", "r-agg"],
+      body: "<b>IngestAndSegment</b> executes — Java + SQL running <i>inside</i> 7L, zero network hops to the data. It dedupes on <b>event_id</b>, inserts into <b>CUSTOMER_EVENT</b>, the engine folds ₹9,800 into <b>MV_SPEND_DAILY's</b> today-bucket, and the procedure rolls <b>CUSTOMER_AGG</b> to <b>₹52,100</b> — all one transaction. Any failure, any business-rule rejection: an early return rolls <i>everything</i> back. Fact, bucket and aggregate can never disagree.",
+      mech: "<span class='k'>guarantee → A</span> · multi-step stored procedure: all writes commit together or not at all",
+      logs: [
+        ["p", "» IngestAndSegment BEGIN @7L · strict serializable"],
+        ["ok", "  dedupe: event 9f3a… not seen ✓"],
+        ["sql", "  INSERT CUSTOMER_EVENT (88412, PAYMENT, ₹9,800)"],
+        ["sql", "  MV_SPEND_DAILY[88412·today] += ₹9,800     -- same txn, automatic"],
+        ["sql", "  UPDATE CUSTOMER_AGG SET txn_sum_15d = Σ(buckets ≥ −15d) = ₹52,100"],
+        ["cm", "  -- any failure here ⇒ every line above rolls back"],
+      ],
+      run: async (c) => {
+        c.execBusy(true);
+        c.flash("r-ev"); await c.wait(700); c.flash("r-mv"); await c.wait(600); c.flash("r-agg");
+        await c.countUp("st-sum", 42300, 52100, 1600, "svg-sum");
+        c.set("st-bkt", fmt(9800)); c.set("svg-bkt", fmt(9800));
+      },
+    },
+    {
+      act: "ACT II · THE EVENT", t: "₹52,100 ≥ ₹50,000 — Silver becomes Gold", dur: 8000, amber: false, spot: ["ATOMIC"],
+      hl: ["n-p7", "p-proc1", "r-rule", "r-cust"],
+      body: "Still the same transaction, still <b>IngestAndSegment</b>. It reads <b>SEGMENT_RULE</b> — replicated, so it's sitting right there — and evaluates the Gold threshold against the aggregate it <i>just</i> wrote. Crossed. <b>CUSTOMER.current_segment flips to GOLD</b> and a <b>segment.changed</b> emit is queued into the same commit. Aggregate, decision and membership move as one.",
+      mech: "<span class='k'>mechanism →</span> read-compute-write with zero-hop rule lookup — use case 1's whole loop in one procedure",
+      logs: [
+        ["sql", "  SELECT threshold FROM SEGMENT_RULE WHERE name='GOLD'   -- replicated, local"],
+        ["ok",  "  eval: 52,100 ≥ 50,000 → GOLD ✓"],
+        ["sql", "  UPDATE CUSTOMER SET current_segment='GOLD'"],
+        ["sql", "  queue export → segment.changed"],
+      ],
+      run: async (c) => { c.execBusy(true); c.flash("r-rule"); await c.wait(900); c.flash("r-cust"); c.setSegment("GOLD"); },
+    },
+    {
+      act: "ACT II · THE EVENT", t: "Commit — 7R agrees, disk remembers · 3.8 ms", dur: 9000, amber: false, spot: ["CONSISTENT", "DURABLE"],
+      hl: ["n-p7", "n-replica", "n-disk", "n-o-seg"],
+      body: "Commit. The transaction executes <b>synchronously on replica 7R</b> — on a different node — and the results are <b>hash-compared</b>: leader and replica must agree bit-for-bit before the client hears anything. The invocation is also recorded in the <b>command log</b> (the safety net for a <i>full-cluster</i> restart). Ack: <b>3.8 ms</b>. Consistency isn't eventual here; it's a precondition of the ack.",
+      mech: "<span class='k'>guarantees → C + D</span> · synchronous K-safety with hash compare · command log for full restarts",
+      logs: [
+        ["ok", "  replica 7R executed · hash compare ✓ identical"],
+        ["ok", "  command log fsync ✓  (protects a full-cluster restart)"],
+        ["ok", "» COMMIT · ack → client · 3.8 ms"],
+        ["p",  "» export: segment.changed { 88412: SILVER → GOLD }"],
+      ],
+      run: async (c) => {
+        c.lat("txn: 3.8 ms");
+        await Promise.all([c.packet("w-p7-replica", 700), c.packet("w-p7-disk", 700)]);
+        c.flash("n-replica"); c.flash("n-disk");
+        await c.packet("w-p7-seg", 1100); c.flash("n-o-seg");
+      },
+    },
+    {
+      act: "ACT III · THE NUDGE", t: "A kurta in the cart — IngestCartWatch arms a clock", dur: 8000, amber: true, spot: [],
+      hl: ["n-phone", "n-t-cart", "n-p7", "p-proc2", "r-cart", "r-watch"],
+      body: "14:31 — Priya adds a <b>₹6,500 kurta</b>, then another app steals her. The cart topic maps to <b>IngestCartWatch</b>: it writes <b>ACTIVE_CART</b> and <b>CART_ITEM</b>… and one more row — <b>CART_WATCH</b>, due <b>15:01:07</b>. The 30-minute deadline is now <i>data</i>, schema-enforced and partition-local. A payment event would make the same procedure simply <code>DELETE</code> it.",
+      mech: "<span class='k'>mechanism →</span> absence-as-data: the timer lives inside the storage engine",
+      logs: [
+        ["p", "» importer: user.cart.events → IngestCartWatch(88412, #5512) @7L"],
+        ["sql", "  INSERT ACTIVE_CART (88412, #5512, ₹6,500) · INSERT CART_ITEM (kurta)"],
+        ["warn", "  INSERT CART_WATCH (88412, #5512, due 15:01:07)   -- TTL 30 MIN armed"],
+      ],
+      run: async (c) => {
+        await c.packet("w-phone-cart", 1100); c.flash("n-t-cart");
+        await c.packet("w-cart-ring", 1000); await c.packet("w-ring-p7", 700);
+        c.execBusy(true);
+        c.flash("r-cart", "amber"); c.flash("r-watch", "amber");
+        c.set("st-cart", "#5512 · ₹6,500"); c.set("svg-cart", "#5512 ₹6,500");
+        c.watch("30:00");
+      },
+    },
+    {
+      act: "ACT III · THE NUDGE", t: "The wait — nothing happens, on purpose", dur: 10000, amber: true, spot: [],
+      hl: ["r-watch"],
+      body: "The hardest event to detect is the one that never arrives. No poller scans for stale carts; no scheduler thread ticks. The watch row simply ages toward its TTL while thousands of <i>other</i> users' transactions stream through 7L's queue around it. If <b>payment.events</b> delivered for cart #5512, <b>IngestCartWatch</b> would delete the row and this story would end silently.",
+      mech: "<span class='k'>mechanism →</span> the countdown costs zero compute until the moment it matters",
+      logs: [
+        ["cm", "-- watching CART_WATCH (88412, #5512) …"],
+        ["cm", "-- a payment would: DELETE FROM CART_WATCH WHERE user=88412 AND cart=#5512"],
+        ["warn", "  no payment observed · TTL draining"],
+      ],
+      run: async (c) => {
+        c.warp(true);
+        await Promise.all([c.clockSweep("14:31:12", "15:00:55", 8000), c.watchSweep(29 * 60 + 55, 12, 8000)]);
+        c.warp(false);
+      },
+    },
+    {
+      act: "ACT III · THE NUDGE", t: "15:01:07 — silence becomes an event", dur: 8000, amber: true, spot: [],
+      hl: ["r-watch", "n-o-ab"],
+      body: "TTL expiry. VoltDB doesn't discard the row — it <b>migrates</b> it to the <b>cart.abandoned</b> target, carrying USER_ID and CART_ID. Thirty minutes of nothing has been converted into a first-class, routable event, two milliseconds after the deadline. This is the pivot of use case 2: from waiting to acting.",
+      mech: "<span class='k'>mechanism →</span> USING TTL 30 MINUTES … MIGRATE TO TARGET cart_abandoned",
+      logs: [
+        ["warn", "» TTL expiry: CART_WATCH (88412, #5512) reached 15:01:07"],
+        ["sql", "  MIGRATE → cart_abandoned { user_id: 88412, cart_id: #5512 }"],
+        ["ok", "  ✓ absence converted to event · +2 ms"],
+      ],
+      run: async (c) => {
+        c.watch("00:00", "dead"); await c.wait(700);
+        await c.packet("w-watch-ab", 1300, true); c.flash("n-o-ab", "amber");
+        c.watch("migrated", "gone"); c.set("svg-watch", "→ migrated");
+      },
+    },
+    {
+      act: "ACT III · THE NUDGE", t: "NudgeCheck — re-check Gold, pick the offer, sign the ledger", dur: 11000, amber: true, spot: ["ATOMIC"],
+      hl: ["n-o-ab", "n-ring", "n-p7", "p-proc3", "r-cust", "r-offers", "r-nlog"],
+      body: "<b>NudgeCheck</b> consumes the abandonment — single-partition again, back through 7L's queue. Three moves, one transaction: <b>①</b> re-read <b>CURRENT_SEGMENT</b> <i>live</i> (still Gold — had she slipped, no nudge). <b>②</b> select from the replicated <b>OFFERS</b> table: best match for <code>GOLD × CART_ABANDON</code> → <b>CART10, 10% off, 15-minute validity</b>. <b>③</b> write <b>NUDGE_LOG (88412, #5512)</b> — the idempotency ledger — in the <i>same commit</i> as the emit. That ledger entry is Act IV's hero.",
+      mech: "<span class='k'>guarantee → A</span> · check + offer choice + ledger + emit: one atomic unit, so no state can drift",
+      logs: [
+        ["p", "» cart.abandoned → NudgeCheck(88412, #5512) @7L"],
+        ["sql", "  ① SELECT current_segment FROM CUSTOMER → GOLD ✓ (live, not cached)"],
+        ["sql", "  ② SELECT offer FROM OFFERS WHERE segment='GOLD' AND trigger='CART_ABANDON'"],
+        ["sql", "     ORDER BY priority LIMIT 1 → CART10 · 10% · valid 15 min ✓"],
+        ["sql", "  ③ INSERT NUDGE_LOG (88412, #5512, 15:01:07)   -- idempotency, same txn"],
+        ["sql", "  queue export → notification.events { offer: CART10 }"],
+      ],
+      run: async (c) => {
+        await c.packet("w-ab-ring", 1500, true);
+        await c.packet("w-ring-p7", 700, true);
+        c.execBusy(true);
+        c.flash("r-cust"); await c.wait(900);
+        c.flash("r-offers", "amber");
+        c.set("st-offer", "CART10 · 10% · 15m"); await c.wait(900);
+        c.flash("r-nlog", "amber");
+        c.set("st-nlog", "(88412,#5512) ✓"); c.set("svg-nlog", "✓ 15:01:07");
+      },
+    },
+    {
+      act: "ACT III · THE NUDGE", t: "The nudge lands — offer attached · 6.2 ms after the trigger", dur: 9000, amber: true, spot: [],
+      hl: ["n-p7", "n-o-notif", "n-svc", "n-phone"],
+      body: "The commit releases the emit; the notification service pushes: <b>“CART10 — 10% off your cart for the next 15 minutes.”</b> From TTL trigger to phone: <b>6.2 ms</b> — deep inside the 10–50 ms reaction window. Priya is still online, kurta still in the cart, and the offer she sees was chosen <i>because</i> she is Gold — segmentation and action, welded together.",
+      mech: "<span class='k'>mechanism →</span> decide-and-emit atomically → single-digit-ms reaction, end to end",
+      logs: [
+        ["ok", "» COMMIT · trigger→nudge 6.2 ms"],
+        ["p", "» push: CART10 · 10% off · expires 15:16"],
+        ["ok", "» delivered · Priya online ✓"],
+      ],
+      run: async (c) => {
+        c.lat("trigger→nudge: 6.2 ms");
+        await c.packet("w-p7-notif", 1000, true); c.flash("n-o-notif", "amber");
+        await c.packet("w-o-svc", 500, true); c.flash("n-svc", "amber");
+        await c.packet("w-notif-phone", 1800, true);
+        c.notif(true); c.flash("n-phone", "amber");
+      },
+    },
+    {
+      act: "ACT IV · DISASTER", t: "15:03 — Node 2 dies · replicas take over in under a second", dur: 13500, amber: false, spot: ["DURABLE"],
+      hlA: [],
+      body: "A hardware fault takes <b>Node 2</b> cold — leaders <b>5L–8L</b> and replicas <b>1R–4R</b> gone. Nothing is lost: replicas <b>5R–8R</b> on Node 3 <b>promote to leaders instantly</b> and the cluster keeps serving — but K-safety has dropped from 1 to <b>0</b>. Then <code>voltdb start</code> brings Node 2 back: it <b>rejoins in seconds</b>, receives the schema, and its partition data <b>streams live from the other nodes</b> — not from disk — while transactions keep flowing. Only when the copy completes is <b>K=1 restored</b>.",
+      mech: "<span class='k'>guarantee → D</span> · K-safety failover + live rejoin from peers · cmd log & snapshots are for full-cluster restarts",
+      logs: [
+        ["err", "!! node2 heartbeat lost · leaders 5L–8L offline · replicas 1R–4R offline"],
+        ["ok", "  failover: 5R–8R on node3 promoted to leaders · < 1s · cluster serving"],
+        ["warn", "  K-safety now 0 (was 1) until node2 is restored"],
+        ["p", "» voltdb start — node2 rejoins in seconds · schema received"],
+        ["sql", "  partition data streaming FROM PEER NODES while txns continue …"],
+        ["ok", "» restore complete · K = 1 again · full K-safety restored"],
+      ],
+      run: async (c) => {
+        // fail node 2 (index 1)
+        $("n2x").classList.add("show"); $("nb-1").classList.add("failed");
+        CELLS.filter((x) => x.node === 1).forEach((x) => x.g.classList.add("down"));
+        await c.wait(1500);
+        // promote 5R–8R on node 3 (cells 20..23)
+        for (let i = 20; i <= 23; i++) {
+          CELLS[i].g.classList.add("promoted");
+          CELLS[i].lbl.textContent = CELLS[i].label.replace("R", "L") + "*";
+        }
+        await c.wait(2300);
+        // node 2 rejoins: schema first, then data streams from PEERS
+        $("n2x").classList.remove("show"); $("nb-1").classList.remove("failed");
+        const n2cells = CELLS.filter((x) => x.node === 1);
+        for (let i = 0; i < n2cells.length; i++) {
+          if (!c.alive()) return;
+          // leaders 5L–8L refill from the promoted cells on node 3; replicas 1R–4R from leaders on node 1
+          const src = i < 4 ? CELLS[20 + i] : CELLS[i - 4];
+          c.dotTo(src.cx, src.cy, n2cells[i], 520);
+          await c.wait(300);
+          n2cells[i].g.classList.remove("down");
+          setCellFill(n2cells[i], 85);
+        }
+        await c.wait(900);
+        // K=1 restored: demotions revert
+        for (let i = 20; i <= 23; i++) {
+          CELLS[i].g.classList.remove("promoted");
+          CELLS[i].lbl.textContent = CELLS[i].label;
+        }
+      },
+    },
+    {
+      act: "ACT IV · DISASTER", t: "A redelivered event knocks — the ledger says no", dur: 10500, amber: true, spot: ["IDEMPOTENT"],
+      hl: ["n-o-ab", "n-ring", "n-p7", "p-proc3", "r-nlog"],
+      body: "Import and export streams are <b>at-least-once</b> — and during the failover, an in-flight <b>cart.abandoned (88412, #5512)</b> is <b>redelivered</b>. <b>NudgeCheck</b> runs again… and its first read finds <b>NUDGE_LOG already holds (88412, #5512)</b>. The procedure exits before emitting anything. No second push, no double discount — because the ledger was written <i>in the same transaction</i> as the original nudge, a redelivery can never see one without the other. The same event_id dedupe protects the aggregates from double-counting.",
+      mech: "<span class='k'>guarantee → idempotent</span> · at-least-once delivery + transactional ledger = exactly-once effect",
+      logs: [
+        ["warn", "» failover redelivery: cart.abandoned (88412, #5512) re-received"],
+        ["p", "» NudgeCheck(88412, #5512) @7L — runs again"],
+        ["sql", "  SELECT 1 FROM NUDGE_LOG WHERE user=88412 AND cart=#5512"],
+        ["err", "  → row exists · already nudged at 15:01:07"],
+        ["ok", "» abort emit — no duplicate nudge, no double offer"],
+        ["cm", "  -- aggregates untouched too: event 9f3a… dedupe on ingest"],
+      ],
+      run: async (c) => {
+        await c.packet("w-ab-ring", 1400, true);
+        await c.packet("w-ring-p7", 700, true);
+        c.execBusy(true);
+        await c.wait(600);
+        c.flashRed("r-nlog");
+        c.set("st-nlog", "(88412,#5512) ✗ dup");
+        const t = document.createElementNS(svgNS, "text");
+        t.setAttribute("x", "890"); t.setAttribute("y", "352");
+        t.setAttribute("fill", "#FF7A76"); t.setAttribute("font-family", "ui-monospace,Menlo,monospace");
+        t.setAttribute("font-size", "20"); t.setAttribute("font-weight", "800");
+        t.textContent = "✕ blocked";
+        $("pk-b").appendChild(t);
+        await c.wait(2400);
+        c.set("st-nlog", "(88412,#5512) ✓");
+      },
+    },
+    {
+      act: "ACT V · SCALE", t: "Peak hour — everyone is Priya", dur: 11500, amber: false, grn: true, spot: ["ISOLATED"],
+      hlA: ["nb-0", "nb-1", "nb-2"],
+      body: "Zoom out. <b>Tens of thousands of events per second</b>, 500M profiles — and every event gets the same treatment: hash → its own leader partition → <b>its own serializable isolation queue</b> (the pulsing amber dots on every cell) → one atomic procedure → <b>single-digit-ms ack</b>. Partitions never coordinate for single-user work, so throughput scales by <b>adding partitions</b>: more nodes, more cores — the latency curve doesn't move. What Priya experienced isn't a demo path; it's the only path there is.",
+      mech: "<span class='k'>mechanism →</span> horizontal scale: N partitions = N parallel serial engines · p99 stays single-digit ms",
+      logs: [
+        ["p", "» peak: segment flips · cart watches arming · TTLs firing · nudges emitting"],
+        ["ok", "  every event: one partition · one queue · one atomic procedure"],
+        ["ok", "  p99 4 ms at 30,000+ ev/s · scale-out = add nodes"],
+      ],
+      run: async (c) => {
+        cellsG.classList.add("queues-on");
+        c.hud("hud-eps", "0 ev/s");
+        const t0 = performance.now(), MS = 9500;
+        const spawn = () => {
+          if (!c.alive()) return;
+          const k = (performance.now() - t0) / MS;
+          if (k >= 1) return;
+          c.dotTo(120 + Math.random() * 1000, 70, CELLS[Math.floor(Math.random() * 24)], 550 + Math.random() * 250);
+          c.hud("hud-eps", Math.round(30000 * Math.min(1, k * 2.2)).toLocaleString("en-IN") + " ev/s");
+          setTimeout(spawn, RM ? 500 : 90);
+        };
+        spawn();
+        await c.wait(MS);
+      },
+    },
+    {
+      act: "EPILOGUE", t: "What one journey proved", dur: 15000, amber: false, grn: true, spot: ["ATOMIC", "CONSISTENT", "ISOLATED", "DURABLE", "IDEMPOTENT"],
+      hlA: [],
+      body: `<div class="scoregrid">
+          <div class="sc"><div class="v">A ✓</div><div class="l">aggregate + decision + offer + ledger: one procedure, one txn</div></div>
+          <div class="sc"><div class="v">C ✓</div><div class="l">replica hash-compare before every ack</div></div>
+          <div class="sc"><div class="v">I ✓</div><div class="l">one serial queue per partition — no locks</div></div>
+          <div class="sc"><div class="v">D ✓</div><div class="l">failover &lt; 1s · node rebuilt live from peers</div></div>
+          <div class="sc"><div class="v">＋idem</div><div class="l">redelivery knocked · NUDGE_LOG refused</div></div>
+          <div class="sc"><div class="v">3.8 / 6.2 ms</div><div class="l">segment flip / trigger→nudge</div></div>
+        </div>`,
+      mech: "<span class='k'>validate in the PoC →</span> window semantics · view write-cost · TTL-fire tolerance · node-kill & rejoin drill · duplicate-redelivery drill",
+      logs: [
+        ["ok", "» use case 1: live segmentation — atomic, single-partition, single-digit ms"],
+        ["ok", "» use case 2: CEP nudge — absence detected in-engine, offer matched to segment"],
+        ["ok", "» disaster: failover, live rejoin from peers, exactly-once effect preserved"],
+        ["cm", "-- all figures illustrative; the PoC replaces them with measured numbers"],
+      ],
+    },
+  ];
+
+  /* ============ element refs / state ============ */
+  const elClock = $("clock"), elWarp = $("timewarp"), elConsole = $("console"), elLat = $("lat");
+  const pkA = $("pk-a"), pkB = $("pk-b");
+  const allNodes = Array.from(document.querySelectorAll("#sceneB .node"));
+  const allWires = Array.from(document.querySelectorAll(".wire"));
+  const sceneA = $("sceneA"), sceneB = $("sceneB");
+  let cur = 0, playing = false, runId = 0, advTimer = null;
+
+  function setClock(str) {
+    const dot = str.lastIndexOf(".");
+    if (dot > 0 && str.indexOf(":") > 0) {
+      elClock.innerHTML = str.slice(0, dot) + "<span class='ms'>" + str.slice(dot) + "</span>";
+    } else elClock.textContent = str;
+  }
+
+  /* ============ chapter context helpers ============ */
+  function ctx(id) {
+    const alive = () => id === runId;
+    const wait = (ms) => new Promise((res) => setTimeout(res, RM ? Math.min(ms, 100) : ms));
+    return {
+      alive, wait,
+      set(elId, v) { const e = $(elId); if (e) e.textContent = v; },
+      lat(v) { elLat.textContent = v; },
+      warp(on) { elWarp.classList.toggle("on", on); },
+      notif(on) { $("phone-notif").classList.toggle("show", on); },
+      hud(elId, v) { const e = $(elId); if (e) e.textContent = v; },
+      hudRows(m) { $("hud-rows").textContent = m >= 500 ? "500M ✓" : m + "M"; },
+      qSet(i, state) {
+        const s = $("q" + i);
+        s.setAttribute("class", "qslot" + (state === "empty" ? "" : " " + state));
+      },
+      execBusy(on) { $("n-exec").classList.toggle("busy", on); },
+      flash(nodeId, mode) {
+        const n = $(nodeId); if (!n) return;
+        const cls = mode === "amber" ? "row-flash-amber" : "row-flash";
+        n.classList.remove("row-flash", "row-flash-amber", "row-flash-red");
+        void n.getBoundingClientRect();
+        n.classList.add(cls);
+      },
+      flashRed(nodeId) {
+        const n = $(nodeId); if (!n) return;
+        n.classList.remove("row-flash", "row-flash-amber", "row-flash-red");
+        void n.getBoundingClientRect();
+        n.classList.add("row-flash-red");
+      },
+      setSegment(seg) {
+        const b = $("st-seg");
+        b.textContent = seg;
+        b.className = "badge " + (seg === "GOLD" ? "gold" : "silver") + (RM ? "" : " flip");
+        const s = $("svg-seg"); s.textContent = seg;
+        s.setAttribute("fill", seg === "GOLD" ? "#FFCE7A" : "#B9C9DC");
+      },
+      watch(v, mood) {
+        const e = $("st-watch");
+        e.innerHTML = "";
+        const s = document.createElement("span");
+        s.className = "watch" + (mood ? " " + mood : "");
+        s.textContent = v;
+        e.appendChild(s);
+        $("svg-watch").textContent = v === "migrated" ? "→ migrated" : "−" + v;
+        $("svg-watch").setAttribute("fill", mood === "gone" ? "#5F7590" : "#FFB65C");
+      },
+      async countUp(elId, from, to, ms, svgId) {
+        if (RM) { this.set(elId, fmt(to)); if (svgId) this.set(svgId, fmt(to)); return; }
+        const t0 = performance.now();
+        return new Promise((res) => {
+          const tick = (t) => {
+            if (!alive()) return res();
+            const k = Math.min(1, (t - t0) / ms), e = 1 - Math.pow(1 - k, 3);
+            const txt = fmt(Math.round(from + (to - from) * e));
+            const el = $(elId);
+            if (el) el.innerHTML = txt + (k < 1 ? "" : " <span class='delta'>+9,800</span>");
+            if (svgId) { const s = $(svgId); if (s) s.textContent = txt; }
+            k < 1 ? requestAnimationFrame(tick) : res();
+          };
+          requestAnimationFrame(tick);
+        });
+      },
+      async clockSweep(fromS, toS, ms) {
+        const p = (s) => { const m = s.split(":"); return (+m[0]) * 3600 + (+m[1]) * 60 + (+m[2]); };
+        const a = p(fromS), b = p(toS);
+        if (RM) { setClock(toS + ".000"); return; }
+        const t0 = performance.now();
+        return new Promise((res) => {
+          const tick = (t) => {
+            if (!alive()) return res();
+            const k = Math.min(1, (t - t0) / ms);
+            const s = Math.round(a + (b - a) * k);
+            const hh = String(Math.floor(s / 3600)).padStart(2, "0");
+            const mm = String(Math.floor((s % 3600) / 60)).padStart(2, "0");
+            const ss = String(s % 60).padStart(2, "0");
+            setClock(hh + ":" + mm + ":" + ss + "." + String(Math.floor(t % 1000)).padStart(3, "0"));
+            k < 1 ? requestAnimationFrame(tick) : res();
+          };
+          requestAnimationFrame(tick);
+        });
+      },
+      async watchSweep(fromSec, toSec, ms) {
+        if (RM) { this.watch(mmss(toSec)); return; }
+        const t0 = performance.now(); const self = this;
+        return new Promise((res) => {
+          const tick = (t) => {
+            if (!alive()) return res();
+            const k = Math.min(1, (t - t0) / ms);
+            self.watch(mmss(Math.round(fromSec + (toSec - fromSec) * k)));
+            k < 1 ? requestAnimationFrame(tick) : res();
+          };
+          requestAnimationFrame(tick);
+        });
+      },
+      packet(pathId, ms, amber) {
+        const path = $(pathId);
+        if (!path) return Promise.resolve();
+        path.classList.add(amber ? "lit-amber" : "lit");
+        if (RM) return new Promise((res) => setTimeout(() => { path.classList.remove("lit", "lit-amber"); res(); }, 120));
+        const dot = document.createElementNS(svgNS, "circle");
+        dot.setAttribute("r", "6");
+        dot.setAttribute("fill", amber ? "#FFB65C" : "#57A7FF");
+        dot.setAttribute("class", "packet" + (amber ? " amber" : ""));
+        pkB.appendChild(dot);
+        const L = path.getTotalLength(), t0 = performance.now();
+        return new Promise((res) => {
+          const tick = (t) => {
+            if (!alive()) { dot.remove(); path.classList.remove("lit", "lit-amber"); return res(); }
+            const k = Math.min(1, (t - t0) / ms);
+            const e = k < .5 ? 2 * k * k : 1 - Math.pow(-2 * k + 2, 2) / 2;
+            const pt = path.getPointAtLength(L * e);
+            dot.setAttribute("cx", pt.x); dot.setAttribute("cy", pt.y);
+            if (k < 1) requestAnimationFrame(tick);
+            else { dot.remove(); path.classList.remove("lit", "lit-amber"); res(); }
+          };
+          requestAnimationFrame(tick);
+        });
+      },
+      dotTo(x0, y0, cell, ms) {
+        if (RM) { cell.g.classList.add("hit"); setTimeout(() => cell.g.classList.remove("hit"), 250); return; }
+        const dot = document.createElementNS(svgNS, "circle");
+        dot.setAttribute("r", "4");
+        dot.setAttribute("fill", "#57A7FF");
+        dot.setAttribute("class", "packet");
+        pkA.appendChild(dot);
+        const t0 = performance.now();
+        const tick = (t) => {
+          if (!alive()) return dot.remove();
+          const k = Math.min(1, (t - t0) / ms);
+          const e = 1 - Math.pow(1 - k, 2);
+          dot.setAttribute("cx", x0 + (cell.cx - x0) * e);
+          dot.setAttribute("cy", y0 + (cell.cy - y0) * e);
+          if (k < 1) requestAnimationFrame(tick);
+          else {
+            dot.remove();
+            cell.g.classList.add("hit");
+            setTimeout(() => cell.g.classList.remove("hit"), 220);
+          }
+        };
+        requestAnimationFrame(tick);
+      },
+    };
+  }
+
+  /* ============ baseline application ============ */
+  function applyBaseline(i) {
+    const b = B[i];
+    sceneA.classList.toggle("on", b.sc === "A");
+    sceneB.classList.toggle("on", b.sc === "B");
+    setClock(b.clock);
+    SCHEMA_ROWS.forEach((r) => $(r).classList.toggle("built", b.schema));
+    setAllFill(b.fill);
+    CELLS.forEach((x) => {
+      x.g.classList.remove("down", "promoted", "hit");
+      x.lbl.textContent = x.label;
+    });
+    cellsG.classList.remove("queues-on");
+    $("nb-1").classList.remove("failed");
+    $("n2x").classList.remove("show");
+    $("hud-rows").textContent = b.fill > 0 ? "500M ✓" : "0";
+    $("hud-eps").textContent = "—";
+    for (let q = 0; q < 5; q++) $("q" + q).setAttribute("class", "qslot");
+    $("n-exec").classList.remove("busy");
+    const segB = $("st-seg");
+    segB.textContent = b.seg;
+    segB.className = "badge " + (b.seg === "GOLD" ? "gold" : "silver");
+    const svgSeg = $("svg-seg");
+    svgSeg.textContent = b.seg;
+    svgSeg.setAttribute("fill", b.seg === "GOLD" ? "#FFCE7A" : "#B9C9DC");
+    $("st-sum").textContent = fmt(b.sum); $("svg-sum").textContent = fmt(b.sum);
+    $("st-bkt").textContent = fmt(b.bkt); $("svg-bkt").textContent = fmt(b.bkt);
+    $("st-cart").textContent = b.cart || "—"; $("svg-cart").textContent = b.cart ? "#5512 ₹6,500" : "—";
+    const w = $("st-watch");
+    if (!b.watch) { w.textContent = "—"; $("svg-watch").textContent = "—"; $("svg-watch").setAttribute("fill", "#5F7590"); }
+    else if (b.watch === "migrated") { w.innerHTML = "<span class='watch gone'>migrated</span>"; $("svg-watch").textContent = "→ migrated"; $("svg-watch").setAttribute("fill", "#5F7590"); }
+    else { w.innerHTML = "<span class='watch'>" + b.watch + "</span>"; $("svg-watch").textContent = "−" + b.watch; $("svg-watch").setAttribute("fill", "#FFB65C"); }
+    $("st-offer").textContent = b.offer || "—";
+    $("st-nlog").textContent = b.nlog ? "(88412,#5512) ✓" : "—";
+    $("svg-nlog").textContent = b.nlog ? "✓ 15:01:07" : "—";
+    $("phone-notif").classList.toggle("show", b.notif);
+    elWarp.classList.remove("on");
+    elLat.textContent = "";
+  }
+
+  /* ============ chapter entry ============ */
+  function enter(i, autoplayNext) {
+    cur = Math.max(0, Math.min(CH.length - 1, i));
+    runId++;
+    const id = runId;
+    clearTimeout(advTimer);
+    pkA.innerHTML = ""; pkB.innerHTML = "";
+    allWires.forEach((w) => w.classList.remove("lit", "lit-amber"));
+
+    applyBaseline(cur);
+    const ch = CH[cur];
+
+    allNodes.forEach((n) => n.classList.remove("on", "warm", "row-flash", "row-flash-amber", "row-flash-red"));
+    document.querySelectorAll("#sceneA .nodebox, #sceneA .node").forEach((n) => n.classList.remove("on", "warm"));
+    (ch.hl || []).forEach((nid) => { const n = $(nid); if (n) n.classList.add(ch.amber ? "warm" : "on"); });
+    (ch.hlA || []).forEach((nid) => { const n = $(nid); if (n) n.classList.add("on"); });
+
+    document.querySelectorAll(".spot").forEach((s) => {
+      s.classList.toggle("on", (ch.spot || []).includes(s.dataset.s));
+    });
+
+    $("chno").innerHTML = "<span class='act'>" + ch.act + "</span> · CHAPTER " + String(cur).padStart(2, "0");
+    $("chcount").textContent = "ch " + String(cur).padStart(2, "0") + " / " + String(CH.length - 1).padStart(2, "0");
+    $("chtitle").textContent = ch.t;
+    $("chbody").innerHTML = ch.body;
+    $("chmech").innerHTML = ch.mech || "";
+    $("chlabel").textContent = String(cur).padStart(2, "0") + " · " + ch.t;
+
+    elConsole.innerHTML = "";
+    (ch.logs || []).forEach((l, idx) => {
+      setTimeout(() => {
+        if (id !== runId) return;
+        const d = document.createElement("div");
+        d.className = "ln " + l[0];
+        d.textContent = l[1];
+        elConsole.appendChild(d);
+        elConsole.scrollTop = elConsole.scrollHeight;
+      }, RM ? 0 : 350 + idx * 560);
+    });
+
+    Array.from($("dots").children).forEach((d, idx) => {
+      d.className = "dot" + (idx === cur ? " cur" : idx < cur ? " done" : "")
+        + (CH[idx].amber ? " amb" : "") + (CH[idx].grn ? " grn" : "");
+      d.setAttribute("aria-selected", idx === cur ? "true" : "false");
+    });
+
+    const c = ctx(id);
+    (async () => { if (ch.run) { try { await ch.run(c); } catch (e) { /* interrupted */ } } })();
+
+    if (playing && autoplayNext !== false) {
+      advTimer = setTimeout(() => {
+        if (id !== runId) return;
+        if (cur < CH.length - 1) enter(cur + 1);
+        else setPlaying(false);
+      }, ch.dur);
+    }
+  }
+
+  function setPlaying(on) {
+    playing = on;
+    $("btn-play").innerHTML = on ? "⏸ Pause" : "▶ Play";
+    if (on) enter(cur);
+    else { clearTimeout(advTimer); runId++; }
+  }
+
+  const dotsBox = $("dots");
+  CH.forEach((ch, idx) => {
+    const b = document.createElement("button");
+    b.className = "dot";
+    b.setAttribute("role", "tab");
+    b.setAttribute("aria-label", "Chapter " + idx + ": " + ch.t);
+    b.title = String(idx).padStart(2, "0") + " · " + ch.t;
+    b.addEventListener("click", () => enter(idx));
+    dotsBox.appendChild(b);
+  });
+
+  $("btn-play").addEventListener("click", () => setPlaying(!playing));
+  $("btn-next").addEventListener("click", () => enter(Math.min(cur + 1, CH.length - 1)));
+  $("btn-prev").addEventListener("click", () => enter(Math.max(cur - 1, 0)));
+  $("btn-restart").addEventListener("click", () => enter(0));
+  $("bigplay").addEventListener("click", () => { $("overlay").classList.add("hidden"); setPlaying(true); });
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "ArrowRight") enter(Math.min(cur + 1, CH.length - 1));
+    else if (e.key === "ArrowLeft") enter(Math.max(cur - 1, 0));
+    else if (e.key === " " && document.activeElement === document.body) { e.preventDefault(); setPlaying(!playing); }
+  });
+
+  enter(0, false);
+})();
+</script>
+
+</body>
+</html>
