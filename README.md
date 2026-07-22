@@ -58,7 +58,3 @@ Honors `prefers-reduced-motion` — animations collapse to instant state changes
 ## Disclaimer
 
 All latency figures, data volumes and business rules in the animation are **illustrative**, chosen to show the *shape* of the system's behavior. A proof of concept replaces them with measured numbers for a specific workload and infrastructure.
-
-## License
-
-MIT — see [LICENSE](LICENSE). VoltDB is a trademark of Volt Active Data, Inc.; this is an independent demonstration page.
